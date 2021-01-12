@@ -1,0 +1,175 @@
+---
+title: "FFC: Factory Farm Collective"
+output: 
+  flexdashboard::flex_dashboard:
+    social: ["facebook", "twitter","instagram"]
+    theme: bootstrap
+    orientation: rows
+    vertical_layout: fill
+    source_code: github
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(shiny)
+library(dplyr)
+library(plotly)
+library(ggplot2)
+library(DT)
+library(mapcan)
+
+FFC <- read.csv("~/Desktop/FFC/COVID/COVID Factory Farms.csv")
+
+### SUMMARY N COUNT FOR GGPLOT2
+FFC.SUM <- FFC %>% group_by(province) %>% summarize(Cases = sum(cases),
+                                                    Deaths = sum(deaths, na.rm = T))
+colnames(FFC.SUM) <- c("Province","Cases","Deaths")
+
+FFC.SUM$Province <- c("AB","QC","ON","BC","MB","NS","SK")
+
+### ALL DATA - COMPANIES AND PROVINCE
+FFC.COMP <- FFC %>% group_by(company,province) %>% summarize(n_count = sum(cases))
+FFC.COMP$PROP <- (FFC.COMP$n_count/sum(FFC.COMP$n_count))*100
+FFC.COMP$PROP <- round(FFC.COMP$PROP,digits = 2)
+colnames(FFC.COMP) <- c("Company","Province","Cases","% of Total Cases")
+FFC.COMP <- FFC.COMP[order(FFC.COMP$Cases, decreasing=T),]
+
+```
+
+Overview
+=======================================================================
+
+
+Row {data-height=100}
+-----------------------------------------------------------------------
+
+### CASES {.value-box}
+
+```{r}
+valueBox(sum(FFC$cases), icon = "fas fa-user-md", caption = "Total Number of Cases", color = "#777777")
+```
+
+
+### DEATHS {.value-box}
+
+```{r}
+valueBox(
+  value = sum(FFC$deaths, na.rm = T),
+  caption = "Total Number of Deaths",
+  icon = "fas fa-plus-square",
+  color = "#999999"
+)
+```
+
+### FACILITIES {.value-box}
+
+```{r}
+valueBox(sum(FFC$cases>=5), icon = "fas fa-exclamation-circle", caption = "Facilities with 5+ COVID-19 Cases", color = "#BBBBBB")
+```
+
+Row
+-----------------------------------------------------------------------
+
+### {data-width=650}
+```{r map, echo=FALSE}
+
+
+can.data <- mapcan(boundaries = province,type = standard)
+can.data$Province <- can.data$pr_alpha
+can.data <- inner_join(can.data,FFC.SUM,
+           by = c("pr_alpha" = "Province"))
+
+
+shinyApp(
+  ui = fluidPage(  
+    titlePanel("Number of Cases in Canadian Slaughterhouses"),
+      plotlyOutput("plot2")
+  ),
+
+server = function(input, output) {
+
+output$plot2 <- renderPlotly({
+print(
+  ggplotly(can.data %>%
+  ggplot(aes(x = long, y = lat, group = group, fill = Cases, text = paste("Deaths:", Deaths))) +
+  geom_polygon() +
+  coord_fixed() +
+  theme_mapcan() +
+  scale_fill_gradient(low = "#BBBBBB", high = "#666666",name = "Cases") +
+  ggtitle(""))) %>% config(displayModeBar = F)
+    })
+}
+
+)
+
+```
+
+
+### {data-width=350}
+
+```{r, echo=FALSE}
+
+## UI
+shinyApp(
+  ui =fluidPage(    
+  titlePanel("Cases by Facilities"),
+    inputPanel(
+      selectInput("Province", "Province:", 
+                  choices=unique(FFC.COMP$Province))
+    ),
+    mainPanel(
+      plotlyOutput("provincial.plot")  
+    )
+  ),
+server = function(input, output, session) {
+  output$provincial.plot <- renderPlotly({
+    plot_ly(data = (FFC.COMP %>% filter(Province == input$Province)), y = ~Cases, x = ~Company, type = 'bar', marker = list(color = "#666666")) %>%   config(displayModeBar = F) %>% layout(xaxis = list(title = ""),yaxis = list(title = "Cases"))
+    })
+})
+
+```
+
+
+Data {data-orientation=columns}
+=======================================================================
+
+Column
+-----------------------------------------------------------------------
+
+###
+
+```{r data, echo=FALSE}
+
+shinyApp(
+    ui = fluidPage(
+        fluidRow(
+            column(12,
+                   DTOutput('table')
+            )
+        )
+    ),
+    server = function(input, output) {
+        output$table <- renderDT(FFC.COMP,
+                                 filter = "top",
+                                 options = list(
+                                     pageLength = NROW(FFC.COMP)
+                                 )
+        )
+    }
+)
+
+```
+
+
+About
+=======================================================================
+
+``` {r, echo=F}
+titlePanel("Number of COVID-19 Cases in Canadian Slaughterhouses and Meat Processing Plants")
+```
+
+The facilities represented in the following table are Canadian slaughterhouses and meat processing/packing plants. This data is gathered predominantly from media reports. Some information has been gathered from company statements or media releases. As public health offices or the companies themselves do not always disclose the actual number of COVID-19 cases in these facilities, and some may not be reported in the media, the real case count is expected to be significantly higher. The totals for both cases and deaths are for workers themselves and exclude any linked COVID-19 cases outside of the facility (e.g. family or community transmission). For those facilities that have “1” listed under the Cases column, it has been confirmed that the workplace has been affected by COVID-19. However, the total number of workers affected hasn’t been publicly disclosed.
+
+https://factoryfarmcollective.ca/covid-19/
+
