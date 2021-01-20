@@ -6,7 +6,7 @@ output:
     theme: bootstrap
     orientation: rows
     vertical_layout: fill
-    source_code: github
+    source_code: https://github.com/kbelisar/COVID19-Dashboard-Slaughterhouses
 runtime: shiny
 ---
 
@@ -19,21 +19,40 @@ library(ggplot2)
 library(DT)
 library(mapcan)
 
-FFC <- read.csv("~/Desktop/FFC/COVID/COVID Factory Farms.csv")
+FFC <- read.csv("COVID19 Tracking - 2021.csv")
 
-### SUMMARY N COUNT FOR GGPLOT2
+### SUMMARIZE CASES BY PROVINCE
+FFC.C <- FFC %>% group_by(province) %>% count(company)
+FFC.C <- FFC.C %>% group_by(province) %>% summarize(Companies = sum(n))
 FFC.SUM <- FFC %>% group_by(province) %>% summarize(Cases = sum(cases),
                                                     Deaths = sum(deaths, na.rm = T))
-colnames(FFC.SUM) <- c("Province","Cases","Deaths")
 
-FFC.SUM$Province <- c("AB","QC","ON","BC","MB","NS","SK")
+FFC.SUM <- merge(FFC.SUM,FFC.C, by = "province")
 
-### ALL DATA - COMPANIES AND PROVINCE
-FFC.COMP <- FFC %>% group_by(company,province) %>% summarize(n_count = sum(cases))
-FFC.COMP$PROP <- (FFC.COMP$n_count/sum(FFC.COMP$n_count))*100
-FFC.COMP$PROP <- round(FFC.COMP$PROP,digits = 2)
-colnames(FFC.COMP) <- c("Company","Province","Cases","% of Total Cases")
-FFC.COMP <- FFC.COMP[order(FFC.COMP$Cases, decreasing=T),]
+FFC.SUM$province[FFC.SUM$province=="Ontario"] <- "ON"
+FFC.SUM$province[FFC.SUM$province=="British Columbia"] <- "BC"
+FFC.SUM$province[FFC.SUM$province=="Alberta"] <- "AB"
+FFC.SUM$province[FFC.SUM$province=="Québec"] <- "QC"
+FFC.SUM$province[FFC.SUM$province=="Manitoba"] <- "MB"
+FFC.SUM$province[FFC.SUM$province=="Nova Scotia"] <- "NS"
+FFC.SUM$province[FFC.SUM$province=="Saskatchewan"] <- "SK"
+
+FFC.SUM <- FFC.SUM %>% rename(Province = province)
+
+### SUMMARIZE CASES BY COMPANY [DIFFERENT THAN .R SCRIPT FOR PLOTLY]
+FFC.Co <- FFC %>% count(company)
+FFC.Co <- FFC.Co %>% group_by(company) %>% summarize(Locations = sum(n))
+FFC.COMP <- FFC %>% group_by(province,company) %>% 
+  summarize(Cases = sum(cases),Deaths = sum(deaths, na.rm = T))
+FFC.COMP$PROP <- (FFC.COMP$Cases/sum(FFC.COMP$Cases))*100
+
+FFC.COMP <- merge(FFC.COMP,FFC.Co, by = "company")
+
+FFC.COMP <- FFC.COMP %>% rename(Company = company, Province = province)
+
+### PROVINCIAL MAP DATA
+can.data <- mapcan(boundaries = province,type = standard)
+can.data <- inner_join(can.data,FFC.SUM, by = c("pr_alpha" = "Province"))
 
 ```
 
@@ -47,7 +66,7 @@ Row {data-height=100}
 ### CASES {.value-box}
 
 ```{r}
-valueBox(sum(FFC$cases), icon = "fas fa-user-md", caption = "Total Number of Cases", color = "#777777")
+valueBox(sum(FFC$cases), icon = "fas fa-exclamation-circle", caption = "Total Number of Cases", color = "#777777")
 ```
 
 
@@ -65,39 +84,36 @@ valueBox(
 ### FACILITIES {.value-box}
 
 ```{r}
-valueBox(sum(FFC$cases>=5), icon = "fas fa-exclamation-circle", caption = "Facilities with 5+ COVID-19 Cases", color = "#BBBBBB")
+valueBox(sum(FFC$cases>=5), icon = "fas fa-industry", caption = "Facilities with COVID-19 Cases", color = "#BBBBBB")
 ```
 
 Row
 -----------------------------------------------------------------------
 
-### {data-width=650}
+### {data-width=670}
 ```{r map, echo=FALSE}
-
-
-can.data <- mapcan(boundaries = province,type = standard)
-can.data$Province <- can.data$pr_alpha
-can.data <- inner_join(can.data,FFC.SUM,
-           by = c("pr_alpha" = "Province"))
-
 
 shinyApp(
   ui = fluidPage(  
     titlePanel("Number of Cases in Canadian Slaughterhouses"),
-      plotlyOutput("plot2")
+      plotlyOutput("map")
   ),
 
 server = function(input, output) {
 
-output$plot2 <- renderPlotly({
+output$map <- renderPlotly({
 print(
   ggplotly(can.data %>%
-  ggplot(aes(x = long, y = lat, group = group, fill = Cases, text = paste("Deaths:", Deaths))) +
+  ggplot(
+    aes(x = long, y = lat, group = group,
+             fill = Cases, text = paste("Deaths:", Deaths,"\n",
+             "Slaughterhouses:",Companies))) +
   geom_polygon() +
   coord_fixed() +
   theme_mapcan() +
-  scale_fill_gradient(low = "#BBBBBB", high = "#666666",name = "Cases") +
-  ggtitle(""))) %>% config(displayModeBar = F)
+    scale_fill_gradient(low = "#E0E0E0", high = "#666666",name = "Cases") +
+  theme(plot.title = element_text(hjust = 0, size = 20, face = "bold"),
+        plot.subtitle = element_text(hjust = 0, size = 13)))) %>% config(displayModeBar = F)
     })
 }
 
@@ -106,27 +122,30 @@ print(
 ```
 
 
-### {data-width=350}
+### {data-width=330}
 
 ```{r, echo=FALSE}
 
 ## UI
 shinyApp(
   ui =fluidPage(    
-  titlePanel("Cases by Facilities"),
+  titlePanel(""),
     inputPanel(
       selectInput("Province", "Province:", 
                   choices=unique(FFC.COMP$Province))
     ),
     mainPanel(
-      plotlyOutput("provincial.plot")  
+      plotlyOutput("company.plot")  
     )
   ),
 server = function(input, output, session) {
-  output$provincial.plot <- renderPlotly({
-    plot_ly(data = (FFC.COMP %>% filter(Province == input$Province)), y = ~Cases, x = ~Company, type = 'bar', marker = list(color = "#666666")) %>%   config(displayModeBar = F) %>% layout(xaxis = list(title = ""),yaxis = list(title = "Cases"))
+  output$company.plot <- renderPlotly({
+    print(
+    ggplotly((FFC.COMP %>% filter(Province == input$Province)) %>% ggplot(aes(x = Company, y = Cases,text = paste("Deaths:",Deaths,"\n","Locations:",Locations))) + geom_col(show.legend = FALSE) + theme_classic() + theme(axis.text.x = element_text(angle = 45))))  %>% config(displayModeBar = F) %>% layout(xaxis = list(title = ""), yaxis = list(title = "Cases"))
     })
 })
+
+
 
 ```
 
@@ -166,10 +185,15 @@ About
 =======================================================================
 
 ``` {r, echo=F}
-titlePanel("Number of COVID-19 Cases in Canadian Slaughterhouses and Meat Processing Plants")
+titlePanel("About")
 ```
 
-The facilities represented in the following table are Canadian slaughterhouses and meat processing/packing plants. This data is gathered predominantly from media reports. Some information has been gathered from company statements or media releases. As public health offices or the companies themselves do not always disclose the actual number of COVID-19 cases in these facilities, and some may not be reported in the media, the real case count is expected to be significantly higher. The totals for both cases and deaths are for workers themselves and exclude any linked COVID-19 cases outside of the facility (e.g. family or community transmission). For those facilities that have “1” listed under the Cases column, it has been confirmed that the workplace has been affected by COVID-19. However, the total number of workers affected hasn’t been publicly disclosed.
 
-https://factoryfarmcollective.ca/covid-19/
+#### THE DATA
+
+These data reflect the most recently available data as of January 17th 2021, from the Factory Farm Collective. Available here: https://factoryfarmcollective.ca/covid-19/
+
+#### THE DASHBOARD CREATOR
+
+"With a deep desire to continue to develop my skills as an avid R user and data scientist, I wanted to use my skills to tell the story of slaughterhouse workers who are often members of some of the most vulnerable populations.These populations face various health disparities that intersect with ethnicity, age, gender, and SES".
 
